@@ -5,6 +5,8 @@ The retrieval of the events is made through the dv.py library and the DV softwar
 All further manipulation are done with the help of matplotlib(especially for it's imshow and imsave methods) and numpy(especially for it's array structure)
 This code has been written to use the least space possible, for an integration on a micro-controller.
 This code has been written in the mindset that it will be transcribed into C for faster computation.
+
+thus no object based programming has been used.
 """
 from dv import *
 import matplotlib.pyplot as plt
@@ -256,14 +258,15 @@ def ItOutlining(M,Col,Lig,outline): #iterative version that gets the next point 
                         return()
                     
                     
-def ItOutlining3(M,ColStart,LigStart): #iterative version of outlining that gives the full outline around the object from which (i,j) is a pixel
+#FINAL outlining code
+def ItOutlining3(M,ColStart,LigStart): #iterative version of outlining that gives the full outline around an object from which (i,j) is a pixel
     outline=[]
     outline.append((ColStart,LigStart))
     while(len(outline)<3 or outline[0]!=outline[-1]):
          ItOutlining(M,outline[-1][0],outline[-1][1],outline) 
     return outline
 
-def IsAdj0(M,i,j):  #function tocheck if the pixel is next to a blank pixel
+def IsAdj0(M,i,j):  #function to check if the pixel is next to a blank pixel
     if (M[i-1][j-1])==0 or (M[i-1][j])==0 or (M[i-1][j+1])==0 or (M[i][j-1])==0 or (M[i][j+1])==0 or (M[i+1][j-1])==0 or (M[i+1][j])==0 or (M[i+1][j+1])==0:
         return True
     else:
@@ -315,25 +318,35 @@ def TestForOutline(Col,Lig,outline):
 #We split the outline into two images, then we fill both outline and compares them afterward
 #
 
-def Moise(M):  #splits the outline into two matrixes m1 and m2 depending on polarity
-    m1 = npy.zeros((127,127));
-    m2 = npy.zeros((127,127));
+def DrawObject(M,Object):
+    m = npy.zeros(size,size)
+    for coordinates in Object:
+        m[coordinates[0]][coordinates[1]]=M[coordinates[0]][coordinates[1]]
+    return m
+        
+
+
+def Moise(M):  #splits the input matrix into two matrixes mpos and mneg depending on polarity
+    mpos = npy.zeros((size,size));
+    mneg = npy.zeros((size,size));
     for i in range(size):
         for j in range(size):
             if M[i][j]==1:
-                m1[i][j]=1
+                mpos[i][j]=1
             elif M[i][j]==-1:
-                m2[i][j]=1
-    return m1,m2
+                mneg[i][j]=1
+    return mpos,mneg
+
+
 
   
 #The goal here is to list all objects in the image
 #for this we first search a non0 pixel on the image
 #Each pixel in an outline is associated with an object
-# the last pixel is (127,127) it is returned when all objects have been identified
+#the last pixel is (127,127); it is returned when all objects have been identified
 #
 
-def GetFirstNon0(M):
+def GetFirstNon0(M): #returns the first non-0 pixel, we check that is it next to a 0 pixel just to make sure it is usable in an outline.
     for i in range(size):
         for j in range(size):
             if M[i][j]==1 and IsAdj0(M,i,j):
@@ -353,22 +366,30 @@ def GetAllObjects(M):
     outline = []
     Col = 0
     Lig = 0
-    while Col<127:
-        while Lig<127:
+    while Col<size:
+        while Lig<size: #we go through all pixels of the image
             if M[Col][Lig]==1:
                 if IsAdj0(M, Col, Lig):
-                    if TestForOutline(Col,Lig,outline):
+                    if TestForOutline(Col,Lig,outline): #
+                        (Col,Lig)=SkipObject(Col,Lig,outline)
+                    else:
                         ItOutlining(M,Col,Lig,outline)
                         Objects.append(outline)
                         (Col,Lig)=SkipObject(Col,Lig,outline)
         Col+=1
         Lig+=1
+    return Objects
             
 
 def SkipObject(Col,Lig,outline): # skips all pixels from a given object (in the form of outline) in the current column
     for coordinates in outline:
-        if Col==coordinates[0] and Lig!=coordinates[1]:
+        if coordinates[0]==Col and coordinates[1]!=Lig:
             return coordinates
+    #if the object is not fully on the screen, this function may not find the target pixel to go to
+    #this happens only when the top/bottom half of an object is off the screen.In which case we can go to the next column.
+    #We supposed that our objects of interest were all well framed, so this case shouldn't happen.
+    print("Object is not well framed :|")
+    return (126,126)
     
 
 def GetNon0(M,Col,Lig,outline):
@@ -388,6 +409,11 @@ def Get3x3(M,i,j):
                 hood[k,l]=(M[i+k][j+l])
     return hood
 
+
+#Testing fncts
+#
+#the main function show the full procedure that is applied to our events to become vectors, each step is saved to 
+#
 
 def TestOutline():
     m=npy.zeros((128,128))
@@ -409,14 +435,14 @@ def main(port):
     SetForComputation()
     
     Mattest=evt_mat(port)
-    ShowMatrix(Mattest,'et1.png')
+    ShowMatrix(Mattest,'Base.png')
     
     Tsh=5/8
     weakpixels(Mattest)
-    ShowMatrix(Mattest,'et2.png')
+    ShowMatrix(Mattest,'Step1.png')
     
     holepixels(Mattest)
-    ShowMatrix(Mattest,'et3.png')
+    ShowMatrix(Mattest,'Step2.png')
     
     (i,j)=GetNon0(Mattest,0,0)
     outline=ItOutlining3(Mattest,i,j)
@@ -424,7 +450,7 @@ def main(port):
     m=npy.zeros((127,127))
     for coo in outline : 
         m[coo[0]][coo[1]]=1
-    plt.imsave('et4',m)
+    plt.imsave('Step3',m)
 
 
 #while(1): main(44737)
