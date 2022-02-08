@@ -11,12 +11,14 @@ thus no object based programming has been used.
 from dv import *
 import matplotlib.pyplot as plt
 import numpy as npy
-
+import copy
 size = 128
 Mattest = npy.zeros((size,size))
 polneg=-1
 polpos=1
 tsh = 1/4
+
+stock = []
 
 def test(port1):
     with NetworkEventInput(address='127.0.0.1', port=port1) as i:
@@ -35,6 +37,8 @@ def SetForComputation(): #command to execute before computation, sets the polari
     global polneg
     polneg=-1
 
+##############################################################################################################################################
+#Aquisition fcnts
 
 def evt_mat(port1): #save a single image from events
     Mat= npy.zeros((size,size))
@@ -121,10 +125,144 @@ def evt_mat4(port1): #same as evt_mat3 except that this code loses no data: when
                     pol=polpos
                 else:
                     pol=polneg
-                Mat[event.y][event.x]=pol
-           
-            
-           
+                Mat[event.y][event.x]=pol()
+                
+def evt_mat5(port1): #creates a "heatmap" of movement , the more events on a pixel, the higher it's value.
+    Mat= npy.zeros((size,size))
+    evtcnt=0
+    pol=0
+    global polpos,polneg
+    for event in NetworkEventInput(address='127.0.0.1',port=port1):
+        if evtcnt<8000: #the event count must be higher than before, as we want to see the ovelapping events.
+            if(event.polarity):
+                pol=polpos
+            else:
+                pol=polneg
+            Mat[event.y][event.x]+=pol
+            evtcnt=evtcnt+1
+        else: 
+            ShowMatrix(Mat,'blbl.png')
+            return Mat
+        
+def evt_mat6(port1): #Heatmap of the number of events, without considering polarity
+    Mat= npy.zeros((size,size))
+    evtcnt=0
+    pol = 1
+    for event in NetworkEventInput(address='127.0.0.1',port=port1):
+        if evtcnt<4000: #the event count must be higher than before, as we want to see the ovelapping events.
+            Mat[event.y][event.x]+=pol
+            evtcnt=evtcnt+1
+        else: 
+            ShowMatrix(Mat,'blbl.png')
+            return Mat
+##############################################################################################################################################
+# Tying to extrapolate vectors directly from the density of events
+#
+
+def Max(M):
+    res = 0
+    pos = {}
+    for i in range(size):
+        for j in range(size):
+            if abs(M[i][j])>res:
+                res = M[i][j]
+                pos ={"i" : i,"j" : j}
+    return pos
+
+def Vectorize(M,pos): #creates Vectors going out of the pixel on position pos
+    VectList = []
+    i = pos["i"]
+    j = pos["j"]
+    pixval = M[i][j]
+    s=0
+    for op in ((1,0),(-1,0),(0,1),(0,-1),(1,1),(1,-1),(-1,-1),(-1,1)):
+        s=abs(pixval-M[i+op[0]][j+op[1]])
+        #print('i :' + str(op[0]),'j :' + str(op[1]) ,s)
+        VectList.append({"i":op[0],"j":op[1] ,"weight":s})
+    return VectList
+
+def SumVect(Vect1,Vect2):
+    if(Vect2 == {}):
+        return Vect1
+    elif(Vect1 == {}):
+        return Vect2
+    return{"i":Vect1["i"]+Vect2["i"],"j":Vect1["j"]+Vect2["j"],"weight":Vect1["weight"]+Vect2["weight"]}
+
+def MaxVect(VectList):
+    maxdist = 0
+    Vectmax = []
+    for Vect in VectList:
+        if Vect["weight"]>maxdist:
+            maxdist=Vect["weight"]
+            Vectmax = Vect
+    return Vectmax
+
+def PixMvt(M,pos,order):
+    VectList = []
+    VectMax = 0
+    Mvt = {}
+    for i in range(order):
+        VectList = Vectorize(M,pos)
+        VectMax = MaxVect(VectList)
+        pos={"i":0,"j":0}
+        print(VectMax)
+        pos["i"]+=int(VectMax["i"])
+        pos["j"]+=int(VectMax["j"])
+        Mvt = SumVect(VectMax,Mvt)
+    return Mvt
+
+def Normalize(M):
+    posmax = Max(M)
+    valmax = M[posmax["i"]][posmax["j"]]
+    for i in range(size):
+        for j in range(size):
+            M[i][j]/valmax
+    return(M)
+    
+
+def Print(M):
+    for i in range(size):
+        for j in range(size):
+            M[i][j]=(M[i][j]*255)/Max(M)
+    return M
+
+def EvtTreshold(M,tsh): #sets to 0 any pixel that has a value lower than tsh, after this function, the outline fnct can be used.
+    for i in range(size):
+        for j in range(size):
+            if abs(M[i][j])<tsh:
+                M[i][j]=0
+    return M
+
+def test10(port):
+    global Mattest
+    global stock
+    
+    Mattest=evt_mat5(port)
+    Normalize(Mattest)
+    plt.imsave('Base.png',Mattest)
+    
+    M = copy.copy(Mattest)
+
+    EvtTreshold(Mattest, 1)
+    plt.imsave('Tsh=1.png',Mattest)
+
+    EvtTreshold(Mattest, 2)
+    plt.imsave('Tsh=2.png',Mattest)
+    
+    print(Max(Mattest))
+    Mvt = PixMvt(M,Max(M),15)
+    print(Mvt)
+    
+    #outline= GetAllObjects(Mattest)
+    
+    #m=npy.zeros((127,127))
+    #for coo in outline : 
+        #m[coo[0]][coo[1]]=1
+    #plt.imsave('Step3',m)
+
+##############################################################################################################################################
+#Simple image processing treatments
+
 def weakpixels(M): #eliminates all pixels that are 'weak' : pixels that are not close to other pixels where events have happened
     global size
     m=M
@@ -151,7 +289,6 @@ def holepixels(M): #replaces "holes" in the image, if a pixel is 0 and next to a
     for i in range(size):
         for j in range(size):
                 if IsHole(m, i, j):
-                    print("woo !")
                     M[i][j]=1
 
 def IsHole(M,i,j): #function for the calculation of the holes
@@ -218,6 +355,7 @@ def Meanfilter(M): #Filters the image by checking a threshold on the avg value a
                     m[i][j]= negpol
     return m
 
+##############################################################################################################################################
 
 # Functions for the computation of the outline of objects.
 #
@@ -312,6 +450,8 @@ def TestForOutline(Col,Lig,outline):
             return True
     return False
     
+
+##############################################################################################################################################
 #Using the outline we now want to extrapolate vectors 
 #to this use we split the outlines between polarity 1 and -1 into two images
 #If the object is an actual real moving object, the outline will be divided in a mostly positive part and a mostly negative part
@@ -323,7 +463,7 @@ def DrawObject(M,Object):
     for coordinates in Object:
         m[coordinates[0]][coordinates[1]]=M[coordinates[0]][coordinates[1]]
     return m
-        
+
 
 
 def Moise(M):  #splits the input matrix into two matrixes mpos and mneg depending on polarity
@@ -338,28 +478,12 @@ def Moise(M):  #splits the input matrix into two matrixes mpos and mneg dependin
     return mpos,mneg
 
 
-
-  
+##############################################################################################################################################
 #The goal here is to list all objects in the image
 #for this we first search a non0 pixel on the image
 #Each pixel in an outline is associated with an object
 #the last pixel is (127,127); it is returned when all objects have been identified
 #
-
-def GetFirstNon0(M): #returns the first non-0 pixel, we check that is it next to a 0 pixel just to make sure it is usable in an outline.
-    for i in range(size):
-        for j in range(size):
-            if M[i][j]==1 and IsAdj0(M,i,j):
-                return((i,j))
-
-def GetNextNon0(M,Col,Lig,outline):
-    for i in range(size):
-        for j in range(size):
-            if M[i][j]==1:
-                if IsAdj0(M, i, j):
-                    if TestForOutline(Col, Lig, outline):
-                        return (Col,Lig)
-    return (127,127)
 
 def GetAllObjects(M):
     Objects = []
@@ -368,12 +492,12 @@ def GetAllObjects(M):
     Lig = 0
     while Col<size:
         while Lig<size: #we go through all pixels of the image
-            if M[Col][Lig]==1:
+            if abs(M[Col][Lig])>1:
                 if IsAdj0(M, Col, Lig):
-                    if TestForOutline(Col,Lig,outline): #
+                    if TestForOutline(Col,Lig,outline):
                         (Col,Lig)=SkipObject(Col,Lig,outline)
                     else:
-                        ItOutlining(M,Col,Lig,outline)
+                        ItOutlining3(M,Col,Lig,outline)
                         Objects.append(outline)
                         (Col,Lig)=SkipObject(Col,Lig,outline)
         Col+=1
@@ -390,15 +514,16 @@ def SkipObject(Col,Lig,outline): # skips all pixels from a given object (in the 
     #We supposed that our objects of interest were all well framed, so this case shouldn't happen.
     print("Object is not well framed :|")
     return (126,126)
-    
+   
 
-def GetNon0(M,Col,Lig,outline):
-    if Col==0 and Lig==0:
-        return GetFirstNon0
-    else : 
-        return GetNextNon0(M, Col, Lig, outline)
-    
-    return ((127,127))
+
+# def GetNon0(M,Col,Lig,outline):
+#     if Col==0 and Lig==0:
+#         return GetFirstNon0
+#     else : 
+#         return GetNextNon0(M, Col, Lig, outline)
+#     return ((127,127))
+
 
 def Get3x3(M,i,j):
     hood = npy.zeros((3,3))
@@ -412,18 +537,13 @@ def Get3x3(M,i,j):
 
 #Testing fncts
 #
-#the main function show the full procedure that is applied to our events to become vectors, each step is saved to 
+#the main function show the full procedure that is applied to our events to become vectors, each step is saved to a new image
 #
 
-def TestOutline():
+def TestOutline(M):
     m=npy.zeros((128,128))
-    M=plt.imread("blblblbl.png")
     outline = []
-    plt.imsave('blbl.png',M)  
-    # outline.append((64,64))
-    # while(len(outline)<3 or outline[0]!=outline[-1]):
-    #      ItOutlining(Cercle,outline[-1][0],outline[-1][1],outline) 
-    #outline=ItOutlining2(Cercle,64,64)   
+    ShowMatrix(M,'blbl.png')  
     outline=ItOutlining3(M,64,64)
     for coo in outline : 
         m[coo[0]][coo[1]]=1
@@ -434,7 +554,7 @@ def main(port):
     global Tsh
     SetForComputation()
     
-    Mattest=evt_mat(port)
+    Mattest=evt_mat5(port)
     ShowMatrix(Mattest,'Base.png')
     
     Tsh=5/8
